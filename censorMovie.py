@@ -14,7 +14,7 @@ WHISPER_CPP_PATH = "/root/VideoCleanUp/whisper.cpp/build/bin/whisper-cli"       
 WHISPER_MODEL = "/root/VideoCleanUp/whisper.cpp/models/ggml-large-v3-turbo.bin"
 BEEP_FREQ = 1000                     # 1 kHz beep
 BEEP_DB = -3                         # loudness of beep
-PROFANITY_LIST = {"fuck", "shit", "bitch", "asshole", "fucker", "motherfucker", "ass", "porn", "hell"}  # customize
+PROFANITY_LIST = {"fuck", "shit", "bitch", "asshole", "fucker", "motherfucker", "ass", "porn", "hell","fucking"}  # customize
 # ----------------------------------------------------------
 
 def convertTimeStamp(timeString):
@@ -94,9 +94,11 @@ def censor_audio(original_wav, transcript):
         end_ms = segment["offsets"]["to"]
         
         duration = end_ms - start_ms
+        # silent_segment = AudioSegment.silent(duration=silence_duration_ms, frame_rate=audio.frame_rate) #Creates a silent portion for the frames
 
-        beep = make_beep(duration)
-        censored = censored.overlay(beep, position=start_ms)
+        beep = make_beep(duration) #Audio to replace portion with
+        censored = censored[:start_ms] + beep + censored[end_ms:] #Censoring exact time frame
+        # censored = censored.overlay(beep, position=start_ms)
 
     # Save censored track
     censored_path = original_wav.replace(".wav", "_censored.wav")
@@ -134,3 +136,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     censor_mkv(args.input_mkv, args.out)
+    
+    
+#Cant find the audio file in .mkv after it supposedly uploaded
+#Beeping doesnt null out actual audio, just plays ontop of it
