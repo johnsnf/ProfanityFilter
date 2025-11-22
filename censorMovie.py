@@ -10,11 +10,12 @@ from pydub.generators import Sine
 # CONFIG
 # ----------------------------------------------------------
 WHISPER_CPP_PATH = "/root/VideoCleanUp/whisper.cpp/build/bin/whisper-cli"          # Path to whisper.cpp executable
-# WHISPER_MODEL = "/root/VideoCleanUp/whisper.cpp/models/ggml-base.bin" # Local Whisper.cpp model
-WHISPER_MODEL = "/root/VideoCleanUp/whisper.cpp/models/ggml-large-v3-turbo.bin"
+WHISPER_MODEL = "/root/VideoCleanUp/whisper.cpp/models/ggml-base.bin" # Local Whisper.cpp model
+# WHISPER_MODEL = "/root/VideoCleanUp/whisper.cpp/models/ggml-large-v3-turbo.bin"
 BEEP_FREQ = 1000                     # 1 kHz beep
 BEEP_DB = -3                         # loudness of beep
 PROFANITY_LIST = {"fuck", "shit", "bitch", "asshole", "fucker", "motherfucker", "ass", "porn", "hell","fucking"}  # customize
+TIME_PADDING = .2 #20%, e.g. tStart - (duration*.2) : tEnd + (duration*.2)
 # ----------------------------------------------------------
 
 def convertTimeStamp(timeString):
@@ -94,10 +95,16 @@ def censor_audio(original_wav, transcript):
         end_ms = segment["offsets"]["to"]
         
         duration = end_ms - start_ms
-        # silent_segment = AudioSegment.silent(duration=silence_duration_ms, frame_rate=audio.frame_rate) #Creates a silent portion for the frames
+        
+        #Padding around word to ensure it isn't missed
+        start_ms -= TIME_PADDING*duration 
+        end_ms += TIME_PADDING*duration 
+        durationNew = end_ms - start_ms 
+        
+        silent_segment = AudioSegment.silent(duration=durationNew, frame_rate=audio.frame_rate) #Creates a silent portion for the frames
 
-        beep = make_beep(duration) #Audio to replace portion with
-        censored = censored[:start_ms] + beep + censored[end_ms:] #Censoring exact time frame
+        # beep = make_beep(duration) #Audio to replace portion with
+        censored = censored[:start_ms] + silent_segment + censored[end_ms:] #Censoring exact time frame
         # censored = censored.overlay(beep, position=start_ms)
 
     # Save censored track
@@ -140,3 +147,81 @@ if __name__ == "__main__":
     
 #Cant find the audio file in .mkv after it supposedly uploaded
 #Beeping doesnt null out actual audio, just plays ontop of it
+
+
+
+
+#TODO:
+# Update code to take positional arguments for beep, silence, or both
+# Some kind of print function that translates all of the text and bolds profanity?
+# Appears to have delay (see end of video ~ 20:00. or earlier around 7:16)
+# Have it store temporary files elswhere and to update/save actual files on drive
+# Add some kind of flag that will stop it from muxing if there are insufficient words detected (e.g. poor/no audio)
+# Add a seperate file for all profane language
+# Add a counter script/log to document quantity of profane language omitted and perhaps what the words were
+# Output profanity counter at the end of each run?
+# Issue with sound might be the codec? See reference code below (also seems like surround sound is lost?):
+
+# import subprocess
+# import os
+
+# def run_command(command):
+#     """Helper function to run shell commands."""
+#     try:
+#         subprocess.run(command, check=True, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+#         print(f"Command executed successfully: {command}")
+#     except subprocess.CalledProcessError as e:
+#         print(f"Error executing command: {command}")
+#         print("STDOUT:", e.stdout.decode())
+#         print("STDERR:", e.stderr.decode())
+#         raise
+
+# def get_audio_codec(input_file):
+#     """Uses ffprobe to get the codec name of the first audio stream."""
+#     command = f'ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "{input_file}"'
+#     try:
+#         result = subprocess.check_output(command, shell=True, text=True).strip()
+#         return result
+#     except subprocess.CalledProcessError:
+#         print("Could not determine audio codec using ffprobe.")
+#         return None
+
+# def extract_and_merge_audio_lossless(input_mkv, output_mkv, temp_audio_file='temp_audio'):
+#     """Extracts audio and merges it back into the MKV container losslessly."""
+    
+#     # 1. Inspect audio codec to choose correct extension for temp file
+#     audio_codec = get_audio_codec(input_mkv)
+#     if not audio_codec:
+#         print("Aborting.")
+#         return
+
+#     # Common extensions for common codecs
+#     if audio_codec in ['aac', 'mp3', 'ac3', 'dts', 'flac', 'vorbis', 'opus']:
+#         temp_audio_file += f'.{audio_codec}'
+#     else:
+#         # For unusual codecs, you might need to specify a generic container 
+#         # or re-encode, but for simplicity, we'll try a common one or rely on ffmpeg's smart defaults.
+#         print(f"Unknown codec {audio_codec}, using .mka extension.")
+#         temp_audio_file += '.mka'
+
+#     # 2. Extract audio without re-encoding
+#     print(f"Extracting audio to {temp_audio_file} (codec: {audio_codec})...")
+#     # -vn means no video, -acodec copy means copy the audio codec as is, -sn means no subtitles
+#     run_command(f'ffmpeg -i "{input_mkv}" -vn -acodec copy -sn "{temp_audio_file}"')
+
+#     # 3. Add the extracted audio back into a new MKV file, keeping the original video
+#     print(f"Merging audio and video into {output_mkv}...")
+#     # -map 0:v:0 maps the first video stream from the first input
+#     # -map 1:a:0 maps the first audio stream from the second input
+#     # -c copy copies all streams without re-encoding
+#     run_command(f'ffmpeg -i "{input_mkv}" -i "{temp_audio_file}" -map 0:v:0 -map 1:a:0 -c copy -shortest "{output_mkv}"')
+
+#     # 4. Clean up the temporary audio file
+#     os.remove(temp_audio_file)
+#     print("Process complete. Temporary file removed.")
+
+# # Example usage:
+# if __name__ == "__main__":
+#     input_file = "input.mkv"
+#     output_file = "output_with_new_audio.mkv"
+#     extract_and_merge_audio_lossless(input_file, output_file)
