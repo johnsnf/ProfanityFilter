@@ -1,6 +1,6 @@
 import json 
 
-PROFANITY_LIST = {"fuck", "shit", "bitch", "asshole", "fucker", "motherfucker", "ass", "porn", "hell","fucking"}  # customize
+PROFANITY_LIST = {"fuck", "shit", "bitch", "asshole", "fucker", "motherfucker", "ass", "porn", "hell","fucking","dam"}  # customize
 
 def loadData(fileName):
     with open(fileName,'r') as f:

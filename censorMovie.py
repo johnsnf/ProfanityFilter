@@ -14,7 +14,7 @@ WHISPER_MODEL = "/root/VideoCleanUp/whisper.cpp/models/ggml-base.bin" # Local Wh
 # WHISPER_MODEL = "/root/VideoCleanUp/whisper.cpp/models/ggml-large-v3-turbo.bin"
 BEEP_FREQ = 1000                     # 1 kHz beep
 BEEP_DB = -3                         # loudness of beep
-PROFANITY_LIST = {"fuck", "shit", "bitch", "asshole", "fucker", "motherfucker", "ass", "porn", "hell","fucking"}  # customize
+PROFANITY_LIST = {"fuck", "shit", "bitch", "asshole", "fucker", "motherfucker", "ass", "porn", "hell","fucking","dam"}  # customize
 TIME_PADDING = .2 #20%, e.g. tStart - (duration*.2) : tEnd + (duration*.2)
 # ----------------------------------------------------------
 
@@ -86,6 +86,7 @@ def censor_audio(original_wav, transcript):
         if not contains_profanity:
             continue
 
+        lStart = len(audio)
         # start_ms = int(segment["start"] * 1000)
         # end_ms = int(segment["end"] * 1000)
         
@@ -109,6 +110,7 @@ def censor_audio(original_wav, transcript):
 
     # Save censored track
     censored_path = original_wav.replace(".wav", "_censored.wav")
+    censored.set_frame_rate(audio.frame_rate)
     censored.export(censored_path, format="wav")
     return censored_path
 
