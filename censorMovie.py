@@ -3,6 +3,18 @@ import json
 import os
 from pydub import AudioSegment
 from pydub.generators import Sine
+import whisperx
+
+#TODO:
+# - Setup to run off of GPU
+# - Setup a flag to indicate whether transcript should be written or not
+# - Write a wrapper script that calls on this script to batch run 
+# - Update print statements
+# - Run off of soundfile to preserve the audio quality 
+# - Setup catches so that it stops running if english keywords are not picked up
+# - Error file that appends to include files that failed
+# - A file that indicates all of the words omitted, where they were, total removed (json file)
+# - MUCH LATER: have a flag to indicate not to take the first audio file
 
 # /root/VideoCleanUp/whisper.cpp/models/ggml-base.bin
 # ./build/bin/whisper-cli -m models/ggml-base.bin -f samples/jfk.wav --max-len 1 -of "test2" -oj
@@ -14,7 +26,7 @@ WHISPER_MODEL = "/root/VideoCleanUp/whisper.cpp/models/ggml-base.bin" # Local Wh
 # WHISPER_MODEL = "/root/VideoCleanUp/whisper.cpp/models/ggml-large-v3-turbo.bin"
 BEEP_FREQ = 1000                     # 1 kHz beep
 BEEP_DB = -3                         # loudness of beep
-PROFANITY_LIST = {"fuck", "shit", "bitch", "asshole", "fucker", "motherfucker", "ass", "porn", "hell","fucking","dam"}  # customize
+PROFANITY_LIST = {"fuck", "shit", "bitch", "asshole", "fucker", "motherfucker", "ass", "porn", "hell","fucking","dam","twat"}  # customize
 TIME_PADDING = .2 #20%, e.g. tStart - (duration*.2) : tEnd + (duration*.2)
 # ----------------------------------------------------------
 
@@ -40,6 +52,22 @@ def run_whisper(audio_path, output_json="transcript.json"):
     subprocess.run(cmd, check=True)
     with open(output_json, "r") as f:
         return json.load(f)
+    
+def runWhisperX(audio_path, output_json = "transcript.json"):
+    model = whisperx.load_model("base",device="cpu", compute_type = "int8")
+    model_a, metadata = whisperx.load_align_model(language_code="en",device="cpu")
+    audio = whisperx.load_audio(audio_path)
+    
+    #Extracting results
+    results = model.transcribe(audio, batch_size = 16) #All text
+    aligned_result = whisperx.align(results["segments"], model_a, metadata, audio, device = "cpu") #Time stamps by word
+    
+    #Saving it to a json file
+    with open(output_json,'w') as f:
+        json.dump(aligned_result,f,indent = 4) #writing data to the file
+        
+    return aligned_result, results 
+
 
 def extract_audio(mkv_path, wav_path):
     """
@@ -80,20 +108,14 @@ def censor_audio(original_wav, transcript):
     audio = AudioSegment.from_wav(original_wav)
     censored = audio[:]  # copy
 
-    for segment in transcript["transcription"]:
-        text = segment["text"].lower().replace(" ","")
+    for segment in transcript["word_segments"]:
+        text = segment["word"].lower().replace(" ","")
         contains_profanity = any(bad in text for bad in PROFANITY_LIST)
         if not contains_profanity:
             continue
-
-        lStart = len(audio)
-        # start_ms = int(segment["start"] * 1000)
-        # end_ms = int(segment["end"] * 1000)
         
-        # start_ms = convertTimeStamp(segment["timestamps"]["from"])
-        # end_ms = convertTimeStamp(segment["timestamps"]["to"])
-        start_ms = segment["offsets"]["from"]
-        end_ms = segment["offsets"]["to"]
+        start_ms = segment["start"] * 1000 #Converting from sec to miliseconds
+        end_ms = segment["end"] * 1000 #Converting from sec to miliseconds
         
         duration = end_ms - start_ms
         
@@ -124,7 +146,7 @@ def censor_mkv(input_mkv, output_mkv="output_censored.mkv"):
     extract_audio(input_mkv, temp_wav)
 
     print("[2] Running Whisper.cpp for transcription...")
-    transcript = run_whisper(temp_wav)
+    transcript, _ = runWhisperX(temp_wav)
 
     print("[3] Creating censored audio track...")
     censored_wav = censor_audio(temp_wav, transcript)
