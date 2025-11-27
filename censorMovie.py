@@ -4,6 +4,8 @@ import os
 from pydub import AudioSegment
 from pydub.generators import Sine
 import whisperx
+import soundfile as sf 
+import numpy as np 
 
 #TODO:
 # - Setup to run off of GPU
@@ -37,22 +39,22 @@ def convertTimeStamp(timeString):
     time = int(d[1]) + (int(d[0][0])*60*60*1000) + (int(d[0][1])*60*1000) + (int(d[0][2])*1000)
     return time 
 
-def run_whisper(audio_path, output_json="transcript.json"):
-    """
-    Runs whisper.cpp on the extracted WAV file and returns parsed JSON.
-    """
-    cmd = [
-        WHISPER_CPP_PATH,
-        "-m", WHISPER_MODEL,
-        "-f", audio_path,
-        "--max-len", "1",
-        "-of", output_json.replace(".json", ""),
-        "-oj"  # output JSON
-    ]
-    print("Running whisper.cpp...")
-    subprocess.run(cmd, check=True)
-    with open(output_json, "r") as f:
-        return json.load(f)
+# def run_whisper(audio_path, output_json="transcript.json"):
+#     """
+#     Runs whisper.cpp on the extracted WAV file and returns parsed JSON.
+#     """
+#     cmd = [
+#         WHISPER_CPP_PATH,
+#         "-m", WHISPER_MODEL,
+#         "-f", audio_path,
+#         "--max-len", "1",
+#         "-of", output_json.replace(".json", ""),
+#         "-oj"  # output JSON
+#     ]
+#     print("Running whisper.cpp...")
+#     subprocess.run(cmd, check=True)
+#     with open(output_json, "r") as f:
+#         return json.load(f)
     
 def runWhisperX(audio_path, output_json = "transcript.json"):
     model = whisperx.load_model("base",device="cpu", compute_type = "int8")
@@ -74,25 +76,50 @@ def extract_audio(mkv_path, wav_path):
     """
     Extracts audio from MKV to WAV using ffmpeg.
     """
-    cmd = ["ffmpeg", "-y", "-i", mkv_path, "-vn", "-ac", "1", "-ar", "16000", wav_path]
+    
+    wav_path = wav_path.replace(".wav","")
+    
+    #Extracting mono 
+    # cmd = ["ffmpeg", "-y", "-i", mkv_path, "-vn", "-ac", "1", "-ar", "16000", wav_path + "_mono.wav"]
+    cmd = ["ffmpeg", "-i", mkv_path, "-ac", "1", wav_path + "_mono.wav"]
     subprocess.run(cmd, check=True)
+    
+    #Extracting full audio 
+    cmd = ["ffmpeg", "-i", mkv_path, "-map", "0:a:0", "-c:a", "pcm_s16le", wav_path + "_full.wav"]
+    subprocess.run(cmd, check=True)
+    
 
 def mux_new_audio(original_mkv, censored_wav, output_mkv):
     """
     Replaces/adds the censored audio track into a new MKV.
     You can choose to add it as a second track instead of replacing.
     """
+    # cmd = [
+    #     "ffmpeg",
+    #     "-y",
+    #     "-i", original_mkv,
+    #     "-i", censored_wav,
+    #     "-map", "0:v",          # keep original video
+    #     "-map", "0:a",          # keep original audio
+    #     "-map", "1:a",          # add censored audio
+    #     "-c:v", "copy",
+    #     "-c:a", "aac",
+    #     "-metadata:s:a:1", "title=Censored Audio",
+    #     output_mkv
+    # ]
+    
     cmd = [
         "ffmpeg",
         "-y",
         "-i", original_mkv,
         "-i", censored_wav,
         "-map", "0:v",          # keep original video
-        "-map", "0:a",          # keep original audio
-        "-map", "1:a",          # add censored audio
+        "-map", "0:a:0",          # keep original audio
+        "-map", "1:a:0",          # add censored audio
         "-c:v", "copy",
-        "-c:a", "aac",
-        "-metadata:s:a:1", "title=Censored Audio",
+        "-c:a:0", "copy",
+        "-c:a:1","flac",
+        # "-metadata:s:a:1", "title=Censored Audio",
         output_mkv
     ]
     subprocess.run(cmd, check=True)
@@ -137,6 +164,41 @@ def censor_audio(original_wav, transcript):
     censored.export(censored_path, format="wav")
     return censored_path
 
+
+def censor_audio2(original_wav, transcript):
+    output_wav = original_wav.replace(".wav", "_censored.wav")
+    original_wav = original_wav.replace(".wav","") + "_full.wav"
+    data, samplerate = sf.read(original_wav)   # data.shape = (samples, channels)
+    
+    if data.ndim == 1:
+        data = data[:, None]
+        
+    for segment in transcript["word_segments"]:
+        text = segment["word"].lower().replace(" ","")
+        contains_profanity = any(bad in text for bad in PROFANITY_LIST)
+        if not contains_profanity:
+            continue
+        
+        start_sec = segment["start"] 
+        end_sec = segment["end"]
+        duration = end_sec - start_sec
+        
+        #Padding around word to ensure it isn't missed
+        start_sec -= TIME_PADDING*duration 
+        end_sec += TIME_PADDING*duration 
+
+        #Converting to frames
+        startFrame = int(start_sec * samplerate)
+        endFrame = int(end_sec * samplerate)
+        
+        #Silence all channels for the interval
+        data[startFrame:endFrame, :] = 0.0
+    
+    #Writing file now 
+    sf.write(output_wav, data, samplerate, subtype = 'PCM_16')
+    
+    return output_wav
+
 # ----------------------------------------------------------
 # MAIN WORKFLOW
 # ----------------------------------------------------------
@@ -150,7 +212,7 @@ def censor_mkv(input_mkv, output_mkv="output_censored.mkv"):
     transcript, _ = runWhisperX(temp_wav)
 
     print("[3] Creating censored audio track...")
-    censored_wav = censor_audio(temp_wav, transcript)
+    censored_wav = censor_audio2(temp_wav, transcript)
 
     print("[4] Muxing new MKV with additional censored audio track...")
     mux_new_audio(input_mkv, censored_wav, output_mkv)
@@ -214,7 +276,7 @@ if __name__ == "__main__":
 #To extract mono version:
 # ffmpeg -i full_audio.wav -ac 1 whisper_input.wav
 
-#Auto-extract original audio
+#Auto-extract original
 # ffmpeg -i input.mkv -map 0:a:0 -c:a pcm_s16le full_audio.wav
 
 #To remux:
