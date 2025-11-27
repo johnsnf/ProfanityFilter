@@ -14,6 +14,7 @@ import whisperx
 # - Setup catches so that it stops running if english keywords are not picked up
 # - Error file that appends to include files that failed
 # - A file that indicates all of the words omitted, where they were, total removed (json file)
+# - Set it up so that it doesnt remove words that are far from the curse word itself (e.g. embarrising?)
 # - MUCH LATER: have a flag to indicate not to take the first audio file
 
 # /root/VideoCleanUp/whisper.cpp/models/ggml-base.bin
@@ -26,7 +27,7 @@ WHISPER_MODEL = "/root/VideoCleanUp/whisper.cpp/models/ggml-base.bin" # Local Wh
 # WHISPER_MODEL = "/root/VideoCleanUp/whisper.cpp/models/ggml-large-v3-turbo.bin"
 BEEP_FREQ = 1000                     # 1 kHz beep
 BEEP_DB = -3                         # loudness of beep
-PROFANITY_LIST = {"fuck", "shit", "bitch", "asshole", "fucker", "motherfucker", "ass", "porn", "hell","fucking","dam","twat"}  # customize
+PROFANITY_LIST = {"fuck", "shit", "bitch", "asshole", "fucker", "motherfucker", "ass", "porn", "hell","fucking","dam","twat","dick","cunt"}  # customize
 TIME_PADDING = .2 #20%, e.g. tStart - (duration*.2) : tEnd + (duration*.2)
 # ----------------------------------------------------------
 
@@ -179,73 +180,47 @@ if __name__ == "__main__":
 # Update code to take positional arguments for beep, silence, or both
 # Some kind of print function that translates all of the text and bolds profanity?
 # Appears to have delay (see end of video ~ 20:00. or earlier around 7:16)
-# Have it store temporary files elswhere and to update/save actual files on drive
-# Add some kind of flag that will stop it from muxing if there are insufficient words detected (e.g. poor/no audio)
-# Add a seperate file for all profane language
-# Add a counter script/log to document quantity of profane language omitted and perhaps what the words were
-# Output profanity counter at the end of each run?
-# Issue with sound might be the codec? See reference code below (also seems like surround sound is lost?):
 
-# import subprocess
-# import os
 
-# def run_command(command):
-#     """Helper function to run shell commands."""
-#     try:
-#         subprocess.run(command, check=True, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-#         print(f"Command executed successfully: {command}")
-#     except subprocess.CalledProcessError as e:
-#         print(f"Error executing command: {command}")
-#         print("STDOUT:", e.stdout.decode())
-#         print("STDERR:", e.stderr.decode())
-#         raise
 
-# def get_audio_codec(input_file):
-#     """Uses ffprobe to get the codec name of the first audio stream."""
-#     command = f'ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "{input_file}"'
-#     try:
-#         result = subprocess.check_output(command, shell=True, text=True).strip()
-#         return result
-#     except subprocess.CalledProcessError:
-#         print("Could not determine audio codec using ffprobe.")
-#         return None
 
-# def extract_and_merge_audio_lossless(input_mkv, output_mkv, temp_audio_file='temp_audio'):
-#     """Extracts audio and merges it back into the MKV container losslessly."""
-    
-#     # 1. Inspect audio codec to choose correct extension for temp file
-#     audio_codec = get_audio_codec(input_mkv)
-#     if not audio_codec:
-#         print("Aborting.")
-#         return
+# import soundfile as sf
+# import numpy as np
 
-#     # Common extensions for common codecs
-#     if audio_codec in ['aac', 'mp3', 'ac3', 'dts', 'flac', 'vorbis', 'opus']:
-#         temp_audio_file += f'.{audio_codec}'
-#     else:
-#         # For unusual codecs, you might need to specify a generic container 
-#         # or re-encode, but for simplicity, we'll try a common one or rely on ffmpeg's smart defaults.
-#         print(f"Unknown codec {audio_codec}, using .mka extension.")
-#         temp_audio_file += '.mka'
+# def silence_intervals_multichannel(input_wav, output_wav, intervals):
+#     # Load audio data and sample rate
+#     data, samplerate = sf.read(input_wav)   # data.shape = (samples, channels)
 
-#     # 2. Extract audio without re-encoding
-#     print(f"Extracting audio to {temp_audio_file} (codec: {audio_codec})...")
-#     # -vn means no video, -acodec copy means copy the audio codec as is, -sn means no subtitles
-#     run_command(f'ffmpeg -i "{input_mkv}" -vn -acodec copy -sn "{temp_audio_file}"')
+#     # Ensure 2D (mono would be shape (samples,))
+#     if data.ndim == 1:
+#         data = data[:, None]
 
-#     # 3. Add the extracted audio back into a new MKV file, keeping the original video
-#     print(f"Merging audio and video into {output_mkv}...")
-#     # -map 0:v:0 maps the first video stream from the first input
-#     # -map 1:a:0 maps the first audio stream from the second input
-#     # -c copy copies all streams without re-encoding
-#     run_command(f'ffmpeg -i "{input_mkv}" -i "{temp_audio_file}" -map 0:v:0 -map 1:a:0 -c copy -shortest "{output_mkv}"')
+#     # Convert time -> sample index
+#     for start_sec, end_sec in intervals:
+#         start_frame = int(start_sec * samplerate)
+#         end_frame = int(end_sec * samplerate)
 
-#     # 4. Clean up the temporary audio file
-#     os.remove(temp_audio_file)
-#     print("Process complete. Temporary file removed.")
+#         # Silence all channels in this range
+#         data[start_frame:end_frame, :] = 0.0
+
+#     # Save back with same channels
+#     sf.write(output_wav, data, samplerate, subtype='PCM_16')
 
 # # Example usage:
-# if __name__ == "__main__":
-#     input_file = "input.mkv"
-#     output_file = "output_with_new_audio.mkv"
-#     extract_and_merge_audio_lossless(input_file, output_file)
+# intervals = [(12.3, 12.8), (55.1, 56.0)]
+# silence_intervals_multichannel("full_audio.wav", "clean_audio.wav", intervals)
+
+
+#To extract mono version:
+# ffmpeg -i full_audio.wav -ac 1 whisper_input.wav
+
+#Auto-extract original audio
+# ffmpeg -i input.mkv -map 0:a:0 -c:a pcm_s16le full_audio.wav
+
+#To remux:
+# ffmpeg -i input.mkv -i clean_audio.wav \
+#   -map 0:v -map 0:a:0 -map 1:a:0 \
+#   -c:v copy \
+#   -c:a:0 copy \
+#   -c:a:1 flac \
+#   output.mkv
