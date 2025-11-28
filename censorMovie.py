@@ -81,11 +81,11 @@ def extract_audio(mkv_path, wav_path):
     
     #Extracting mono 
     # cmd = ["ffmpeg", "-y", "-i", mkv_path, "-vn", "-ac", "1", "-ar", "16000", wav_path + "_mono.wav"]
-    cmd = ["ffmpeg", "-i", mkv_path, "-ac", "1", wav_path + "_mono.wav"]
+    cmd = ["ffmpeg", "-y", "-i", mkv_path, "-ac", "1", wav_path + "_mono.wav"]
     subprocess.run(cmd, check=True)
     
     #Extracting full audio 
-    cmd = ["ffmpeg", "-i", mkv_path, "-map", "0:a:0", "-c:a", "pcm_s16le", wav_path + "_full.wav"]
+    cmd = ["ffmpeg", "-y", "-i", mkv_path, "-map", "0:a:0", "-c:a", "pcm_s16le", wav_path + "_full.wav"]
     subprocess.run(cmd, check=True)
     
 
