@@ -24,42 +24,24 @@ import numpy as np
 # ----------------------------------------------------------
 # CONFIG
 # ----------------------------------------------------------
-WHISPER_CPP_PATH = "/root/VideoCleanUp/whisper.cpp/build/bin/whisper-cli"          # Path to whisper.cpp executable
-WHISPER_MODEL = "/root/VideoCleanUp/whisper.cpp/models/ggml-base.bin" # Local Whisper.cpp model
-# WHISPER_MODEL = "/root/VideoCleanUp/whisper.cpp/models/ggml-large-v3-turbo.bin"
-BEEP_FREQ = 1000                     # 1 kHz beep
-BEEP_DB = -3                         # loudness of beep
+
 PROFANITY_LIST = {"fuck", "shit", "bitch", "asshole", "fucker", "motherfucker", "ass", "porn", "hell","fucking","dam","twat","dick","cunt"}  # customize
 TIME_PADDING = .2 #20%, e.g. tStart - (duration*.2) : tEnd + (duration*.2)
 # ----------------------------------------------------------
+
+
 
 def convertTimeStamp(timeString):
     d = timeString.split(",")
     d[0] = d[0].split(":") 
     time = int(d[1]) + (int(d[0][0])*60*60*1000) + (int(d[0][1])*60*1000) + (int(d[0][2])*1000)
     return time 
-
-# def run_whisper(audio_path, output_json="transcript.json"):
-#     """
-#     Runs whisper.cpp on the extracted WAV file and returns parsed JSON.
-#     """
-#     cmd = [
-#         WHISPER_CPP_PATH,
-#         "-m", WHISPER_MODEL,
-#         "-f", audio_path,
-#         "--max-len", "1",
-#         "-of", output_json.replace(".json", ""),
-#         "-oj"  # output JSON
-#     ]
-#     print("Running whisper.cpp...")
-#     subprocess.run(cmd, check=True)
-#     with open(output_json, "r") as f:
-#         return json.load(f)
     
 def runWhisperX(audio_path, output_json = "transcript.json"):
-    model = whisperx.load_model("base",device="cpu", compute_type = "int8")
+    # model = whisperx.load_model("base",device="cpu", compute_type = "int8")
+    model = whisperx.load_model("base",device="cpu", compute_type = "int8", vad_method = "silero")
     model_a, metadata = whisperx.load_align_model(language_code="en",device="cpu")
-    audio = whisperx.load_audio(audio_path)
+    audio = whisperx.load_audio(audio_path.replace(".wav","_mono.wav"))
     
     #Extracting results
     results = model.transcribe(audio, batch_size = 16) #All text
@@ -80,7 +62,6 @@ def extract_audio(mkv_path, wav_path):
     wav_path = wav_path.replace(".wav","")
     
     #Extracting mono 
-    # cmd = ["ffmpeg", "-y", "-i", mkv_path, "-vn", "-ac", "1", "-ar", "16000", wav_path + "_mono.wav"]
     cmd = ["ffmpeg", "-y", "-i", mkv_path, "-ac", "1", wav_path + "_mono.wav"]
     subprocess.run(cmd, check=True)
     
@@ -94,20 +75,7 @@ def mux_new_audio(original_mkv, censored_wav, output_mkv):
     Replaces/adds the censored audio track into a new MKV.
     You can choose to add it as a second track instead of replacing.
     """
-    # cmd = [
-    #     "ffmpeg",
-    #     "-y",
-    #     "-i", original_mkv,
-    #     "-i", censored_wav,
-    #     "-map", "0:v",          # keep original video
-    #     "-map", "0:a",          # keep original audio
-    #     "-map", "1:a",          # add censored audio
-    #     "-c:v", "copy",
-    #     "-c:a", "aac",
-    #     "-metadata:s:a:1", "title=Censored Audio",
-    #     output_mkv
-    # ]
-    
+
     cmd = [
         "ffmpeg",
         "-y",
@@ -124,8 +92,6 @@ def mux_new_audio(original_mkv, censored_wav, output_mkv):
     ]
     subprocess.run(cmd, check=True)
 
-def make_beep(duration_ms):
-    return Sine(BEEP_FREQ).to_audio_segment(duration=duration_ms).apply_gain(BEEP_DB)
 
 #transcription[0]["text"] - text
 #transcription[0]["timestamps"]["from"] - start time
