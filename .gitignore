@@ -1,4 +1,4 @@
-.log
-.wav
-.mkv
+*.log
+*.wav
+*.mkv
 
