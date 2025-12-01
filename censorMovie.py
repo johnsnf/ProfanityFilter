@@ -1,23 +1,26 @@
 import subprocess
 import json
 import os
-from pydub import AudioSegment
-from pydub.generators import Sine
 import whisperx
 import soundfile as sf 
 import numpy as np 
 
 #TODO:
-# - Setup to run off of GPU
-# - Setup a flag to indicate whether transcript should be written or not
 # - Write a wrapper script that calls on this script to batch run 
-# - Update print statements
-# - Run off of soundfile to preserve the audio quality 
-# - Setup catches so that it stops running if english keywords are not picked up
 # - Error file that appends to include files that failed
-# - A file that indicates all of the words omitted, where they were, total removed (json file)
-# - Set it up so that it doesnt remove words that are far from the curse word itself (e.g. embarrising?)
 # - MUCH LATER: have a flag to indicate not to take the first audio file
+
+
+#.....
+# - Majority match for profanity (e.g. dont want to throw out 'embarassing')
+# - Summarized list of profanity omitted 
+# - Setup script to save files in appropriate directories (scratch and such)
+
+#Left off: 
+
+# - Whitelist ("hello")
+# - If nothing is removed, skip file but note its skipped
+
 
 # /root/VideoCleanUp/whisper.cpp/models/ggml-base.bin
 # ./build/bin/whisper-cli -m models/ggml-base.bin -f samples/jfk.wav --max-len 1 -of "test2" -oj
@@ -25,18 +28,17 @@ import numpy as np
 # CONFIG
 # ----------------------------------------------------------
 
-PROFANITY_LIST = {"fuck", "shit", "bitch", "asshole", "fucker", "motherfucker", "ass", "porn", "hell","fucking","dam","twat","dick","cunt"}  # customize
+# PROFANITY_LIST = {"fuck", "shit", "bitch", "asshole", "fucker", "motherfucker", "ass", "porn", "hell","fucking","dam","twat","dick","cunt"}  # customize
 TIME_PADDING = .2 #20%, e.g. tStart - (duration*.2) : tEnd + (duration*.2)
+PROFANITY_LIST_FILE_NAME = "PROFLIST.json"
 # ----------------------------------------------------------
 
+def loadProfanityList():
+    with open(PROFANITY_LIST_FILE_NAME,'r') as f:
+        l = json.load(f)
+    return l 
 
 
-def convertTimeStamp(timeString):
-    d = timeString.split(",")
-    d[0] = d[0].split(":") 
-    time = int(d[1]) + (int(d[0][0])*60*60*1000) + (int(d[0][1])*60*1000) + (int(d[0][2])*1000)
-    return time 
-    
 def runWhisperX(audio_path, output_json = "transcript.json"):
     # model = whisperx.load_model("base",device="cpu", compute_type = "int8")
     model = whisperx.load_model("base",device="cpu", compute_type = "int8", vad_method = "silero")
@@ -92,58 +94,57 @@ def mux_new_audio(original_mkv, censored_wav, output_mkv):
     ]
     subprocess.run(cmd, check=True)
 
+def inList(text, tarList):
+    '''
+    text - search text
+    tarList - this is the reference list it is being compared against
+    
+    '''
+    
+    PERCENT_MATCH = 0.6 #Percentage match, expressed as decimal
+    
+    textCount = len(text) #Number of characters in search text
+    for l in tarList:
+        if l in text:
+            fullLen = len(l)
+            if fullLen/textCount >= PERCENT_MATCH:
+                return True 
+    
+    return False 
 
-#transcription[0]["text"] - text
-#transcription[0]["timestamps"]["from"] - start time
-#transcription[0]["timestamps"]["to"] - end time
+def removedContentSummary(languageRemoved):
+    print('-'*46)
+    print('\n')
+    print(f'Word          : Count')
+    totalCount = 0
+    for key in languageRemoved.keys():
+        print(f'{key:14}: {languageRemoved[key]:5}')
+        totalCount += languageRemoved[key]
+    print('-'*21)
+    print(f'Words blocked: {totalCount:4}')
 
 
-def censor_audio(original_wav, transcript):
-    audio = AudioSegment.from_wav(original_wav)
-    censored = audio[:]  # copy
-
-    for segment in transcript["word_segments"]:
-        text = segment["word"].lower().replace(" ","")
-        contains_profanity = any(bad in text for bad in PROFANITY_LIST)
-        if not contains_profanity:
-            continue
         
-        start_ms = segment["start"] * 1000 #Converting from sec to miliseconds
-        end_ms = segment["end"] * 1000 #Converting from sec to miliseconds
-        
-        duration = end_ms - start_ms
-        
-        #Padding around word to ensure it isn't missed
-        start_ms -= TIME_PADDING*duration 
-        end_ms += TIME_PADDING*duration 
-        durationNew = end_ms - start_ms 
-        
-        silent_segment = AudioSegment.silent(duration=durationNew, frame_rate=audio.frame_rate) #Creates a silent portion for the frames
 
-        # beep = make_beep(duration) #Audio to replace portion with
-        censored = censored[:start_ms] + silent_segment + censored[end_ms:] #Censoring exact time frame
-        # censored = censored.overlay(beep, position=start_ms)
-
-    # Save censored track
-    censored_path = original_wav.replace(".wav", "_censored.wav")
-    censored.set_frame_rate(audio.frame_rate)
-    censored.export(censored_path, format="wav")
-    return censored_path
-
-
-def censor_audio2(original_wav, transcript):
+def censor_audio(original_wav, transcript, PROFANITY_LIST):
     output_wav = original_wav.replace(".wav", "_censored.wav")
     original_wav = original_wav.replace(".wav","") + "_full.wav"
     data, samplerate = sf.read(original_wav)   # data.shape = (samples, channels)
+    languageRemoved = {}
     
     if data.ndim == 1:
         data = data[:, None]
         
     for segment in transcript["word_segments"]:
         text = segment["word"].lower().replace(" ","")
-        contains_profanity = any(bad in text for bad in PROFANITY_LIST)
+        contains_profanity = inList(text, PROFANITY_LIST)
         if not contains_profanity:
             continue
+        
+        if text in languageRemoved.keys():
+            languageRemoved[text] += 1 
+        else:
+            languageRemoved[text] = 1
         
         start_sec = segment["start"] 
         end_sec = segment["end"]
@@ -163,28 +164,103 @@ def censor_audio2(original_wav, transcript):
     #Writing file now 
     sf.write(output_wav, data, samplerate, subtype = 'PCM_16')
     
-    return output_wav
+    # formatted_json = json.dumps(languageRemoved, indent=4)
+    # print(formatted_json)
+    
+    return output_wav, languageRemoved
+
+def logRemovedLanguage(input_mkv, baseDir, languageRemoved):
+    '''
+    input_mkv - Name of the log file (.json)
+    baseDirectory that files will be saved to. Note, will create replicate folder structure here
+    
+    
+    
+    input_mkv - name of the mkv file (original) 
+    baseDir - This is the top level directory where the log files will be stored (sub folders made to mirror structure contianing the input_mkv)
+    languageRemoved - Dictionary containing words/counts of removed files 
+    
+    !!!! LEFT OFF HERE
+    '''
+    
+    input_mkv = os.path.abspath(input_mkv) #Getting full directory
+    baseDir = os.path.abspath(baseDir) #Getting full directory 
+    
+    mkvFileName = input_mkv.split('/')[-1]
+    subFolders = input_mkv.split('/')[-3:-1] #Getting 2 levels up from file of interest
+    subFolders = [item for item in subFolders if item != "Movies"]#Dropping "Movies" if applicable
+    
+    if len(subFolders) > 1:
+        logName =  mkvFileName.replace(".mkv","_DroppedLanguage.json")
+        logName = subFolders[1] + "_" + logName 
+        subFolders = subFolders[0] 
+    else:
+        logName =  mkvFileName.replace(".mkv","_DroppedLanguage.json")
+        subFolders = subFolders[0]
+    
+    #Building log directory
+    logDir = os.getcwd() 
+    logDir = os.path.join(logDir,subFolders)
+    if not os.path.exists(logDir):
+        os.mkdir(logDir) 
+    
+    logFileDir = os.path.join(logDir,logName)
+
+    with open(logFileDir,'w') as f:
+        json.dump(languageRemoved,f,indent=4)
+    
+    # pass 
+
+    # #os.path.abspath -> this will get the full directory to the file
+    # cwd = os.getcwd() #Current working directory
+    # mkvFile = os.path.abspath(os.path.join(cwd,input_mkv)) #Full directory of mkvfile
+    # logFile = input_mkv.replace(".mkv","_DroppedLanguage.json")
+    # logFile = os.path.abspath(logFile).split("/")[-1] #Getting the actual file name 
+    
+    # #Building the file directory for storing log file 
+    
+
+    # # os.path.exists()
+    # # os.path.join()
+    # # a = os.getcwd().split("/") 
+    # # a[-1] & a[-2]
+    # # os.mkdir() 
+    # # os.path.abspath(c)
+    # with open(name, "w") as f:
+    #     json.dump(languageRemoved,f)
+
 
 # ----------------------------------------------------------
 # MAIN WORKFLOW
 # ----------------------------------------------------------
-def censor_mkv(input_mkv, output_mkv="output_censored.mkv"):
+def censor_mkv(input_mkv, output_mkv="output_censored.mkv",logsDir = os.getcwd()):
     temp_wav = "temp_audio.wav"
+    
+    PROFANITY_LIST = loadProfanityList() 
 
     print("[1] Extracting audio...")
     extract_audio(input_mkv, temp_wav)
 
-    print("[2] Running Whisper.cpp for transcription...")
+    print("[2] Running WhisperX for transcription...")
     transcript, _ = runWhisperX(temp_wav)
 
     print("[3] Creating censored audio track...")
-    censored_wav = censor_audio2(temp_wav, transcript)
+    censored_wav, languageRemoved = censor_audio(temp_wav, transcript, PROFANITY_LIST)
 
     print("[4] Muxing new MKV with additional censored audio track...")
     mux_new_audio(input_mkv, censored_wav, output_mkv)
+    
+    removedContentSummary(languageRemoved = languageRemoved) #Printing summary of content removed
+    # removedContent(languageRemoved = languageRemoved, fileName = input_mkv.replace(".mkv","_DroppedLanguage.json"))
+        # with open("output.json", "w") as json_file:
+        # json.dump(data, json_file)
+        
+    #Saving information about language dropped
+    logRemovedLanguage(input_mkv,baseDir = logsDir, languageRemoved = languageRemoved)
 
     print("Done!")
     print(f"New file created: {output_mkv}")
+    
 
 # ----------------------------------------------------------
 
@@ -192,10 +268,11 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("input_mkv", help="Path to input MKV file")
+    parser.add_argument("--logs", default = os.getcwd(), help = "Specify the directory where the logs are stored for profanity that was filtered")
     parser.add_argument("--out", default="censored_output.mkv", help="Output MKV")
     args = parser.parse_args()
 
-    censor_mkv(args.input_mkv, args.out)
+    censor_mkv(args.input_mkv, args.out, args.logs)
     
     
 #Cant find the audio file in .mkv after it supposedly uploaded
