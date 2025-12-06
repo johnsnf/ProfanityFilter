@@ -1,4 +1,4 @@
 *.log
 *.wav
 *.mkv
-
+__pycache__/*
