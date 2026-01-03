@@ -4,6 +4,7 @@ import os
 import whisperx
 import soundfile as sf 
 import numpy as np 
+import shutil
 
 #TODO:
 # - Write a wrapper script that calls on this script to batch run 
@@ -49,9 +50,9 @@ def runWhisperX(audio_path, output_json = "transcript.json"):
     results = model.transcribe(audio, batch_size = 16) #All text
     aligned_result = whisperx.align(results["segments"], model_a, metadata, audio, device = "cpu") #Time stamps by word
     
-    #Saving it to a json file
-    with open(output_json,'w') as f:
-        json.dump(aligned_result,f,indent = 4) #writing data to the file
+    # #Saving it to a json file .... Leaving this here incase interested in implementing in the future
+    # with open(output_json,'w') as f:
+    #     json.dump(aligned_result,f,indent = 4) #writing data to the file
         
     return aligned_result, results 
 
@@ -89,7 +90,17 @@ def mux_new_audio(original_mkv, censored_wav, output_mkv):
         "-c:v", "copy",
         "-c:a:0", "copy",
         "-c:a:1","flac",
+        
+        # Clear default flag from original audio
+        "-disposition:a:0", "0",
+
+        # Set censored audio as default
+        "-disposition:a:1", "default",
+
+        # Optional but recommended: name the track
+        "-metadata:s:a:1", "title=Censored Audio",
         # "-metadata:s:a:1", "title=Censored Audio",
+        
         output_mkv
     ]
     subprocess.run(cmd, check=True)
@@ -135,12 +146,14 @@ def censor_audio(original_wav, transcript, PROFANITY_LIST):
     if data.ndim == 1:
         data = data[:, None]
         
+    profanityFlag = False 
     for segment in transcript["word_segments"]:
         text = segment["word"].lower().replace(" ","")
         contains_profanity = inList(text, PROFANITY_LIST)
         if not contains_profanity:
             continue
-        
+        else:
+            profanityFlag = True
         if text in languageRemoved.keys():
             languageRemoved[text] += 1 
         else:
@@ -161,11 +174,12 @@ def censor_audio(original_wav, transcript, PROFANITY_LIST):
         #Silence all channels for the interval
         data[startFrame:endFrame, :] = 0.0
     
+    if not profanityFlag:
+        raise Exception("No profanity detected, skipping file")
+    
     #Writing file now 
     sf.write(output_wav, data, samplerate, subtype = 'PCM_16')
     
-    # formatted_json = json.dumps(languageRemoved, indent=4)
-    # print(formatted_json)
     
     return output_wav, languageRemoved
 
@@ -209,25 +223,15 @@ def logRemovedLanguage(input_mkv, baseDir, languageRemoved):
     with open(logFileDir,'w') as f:
         json.dump(languageRemoved,f,indent=4)
     
-    # pass 
-
-    # #os.path.abspath -> this will get the full directory to the file
-    # cwd = os.getcwd() #Current working directory
-    # mkvFile = os.path.abspath(os.path.join(cwd,input_mkv)) #Full directory of mkvfile
-    # logFile = input_mkv.replace(".mkv","_DroppedLanguage.json")
-    # logFile = os.path.abspath(logFile).split("/")[-1] #Getting the actual file name 
     
-    # #Building the file directory for storing log file 
-    
-
-    # # os.path.exists()
-    # # os.path.join()
-    # # a = os.getcwd().split("/") 
-    # # a[-1] & a[-2]
-    # # os.mkdir() 
-    # # os.path.abspath(c)
-    # with open(name, "w") as f:
-    #     json.dump(languageRemoved,f)
+def cleanUpFiles():
+    '''
+    Deletes all temporary files
+    '''
+    cwd = os.getcwd()
+    os.remove(os.path.join(cwd,'temp_audio_censored.wav'))
+    os.remove(os.path.join(cwd,'temp_audio_full.wav'))
+    os.remove(os.path.join(cwd,'temp_audio_mono.wav'))
 
 
 # ----------------------------------------------------------
@@ -248,7 +252,9 @@ def censor_mkv(input_mkv, output_mkv="output_censored.mkv",logsDir = os.getcwd()
     censored_wav, languageRemoved = censor_audio(temp_wav, transcript, PROFANITY_LIST)
 
     print("[4] Muxing new MKV with additional censored audio track...")
-    mux_new_audio(input_mkv, censored_wav, output_mkv)
+    mux_new_audio(input_mkv, censored_wav, input_mkv.replace(".mkv","_TEMP.mkv"))
+    shutil.move(input_mkv.replace(".mkv","_TEMP.mkv"), input_mkv) #Replacing original file with new file
+    # os.remove(input_mkv.replace(".mkv","_TEMP.mkv")) #Removing temporary .mkv file
     
     removedContentSummary(languageRemoved = languageRemoved) #Printing summary of content removed
     # removedContent(languageRemoved = languageRemoved, fileName = input_mkv.replace(".mkv","_DroppedLanguage.json"))
@@ -257,9 +263,10 @@ def censor_mkv(input_mkv, output_mkv="output_censored.mkv",logsDir = os.getcwd()
         
     #Saving information about language dropped
     logRemovedLanguage(input_mkv,baseDir = logsDir, languageRemoved = languageRemoved)
+    cleanUpFiles()
 
     print("Done!")
-    print(f"New file created: {output_mkv}")
+    # print(f"New file created: {output_mkv}")
     
 
 # ----------------------------------------------------------
@@ -275,16 +282,11 @@ if __name__ == "__main__":
     censor_mkv(args.input_mkv, args.out, args.logs)
     
     
-#Cant find the audio file in .mkv after it supposedly uploaded
-#Beeping doesnt null out actual audio, just plays ontop of it
-
-
-
-
 #TODO:
-# Update code to take positional arguments for beep, silence, or both
-# Some kind of print function that translates all of the text and bolds profanity?
-# Appears to have delay (see end of video ~ 20:00. or earlier around 7:16)
+# - Cannot edit existing files with ffmpeg, instead copy all files into replicated directory (so I can use the MV command)
+    #   Todo this, get dir.split("/"), filter out what not wanted, then "/".join(list) to reconstruct directory. May need to boolean with cwd vs tar dir?
+# - File default audio should be newly added one 
+
 
 
 

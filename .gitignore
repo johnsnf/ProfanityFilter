@@ -2,3 +2,6 @@
 *.wav
 *.mkv
 __pycache__/*
+.DS_Store
+MovieCensor
+testFiles
